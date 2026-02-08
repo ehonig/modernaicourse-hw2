@@ -1,4 +1,5 @@
 # /// script
+# requires-python = ">=3.14"
 # dependencies = [
 #     "marimo",
 #     "numpy==2.4.1",
@@ -12,8 +13,8 @@
 
 import marimo
 
-__generated_with = "0.19.7"
-app = marimo.App()
+__generated_with = "0.19.9"
+app = marimo.App(width="medium")
 
 with app.setup(hide_code=True):
     import marimo as mo
@@ -86,6 +87,80 @@ def _():
     return
 
 
+@app.cell
+def _():
+    class Function:
+        """
+        Base class for automatic differentiation functions. Subclasses must
+        implement forward() and backward().
+        """
+
+        def forward(self, *args):
+            raise NotImplementedError
+
+        def backward(self, grad, *args):
+            raise NotImplementedError
+
+    return (Function,)
+
+
+@app.cell
+def _(Add, Divide, Exp, Log, Multiply, Negate, Power, Subtract):
+    class Variable:
+        def __init__(self, value, function=None, parents=None):
+            """
+            Initialize the variable with its needed properties.
+            """
+            self.value = value
+            self.grad = None
+            self.function = function
+            self.parents = parents
+            self.num_children = 0
+
+        @staticmethod
+        def _apply(fn, *args):
+            """Construct a node in the computation graph by applying fn to args."""
+            value = fn.forward(*[a.value for a in args])
+            for p in args:
+                p.num_children += 1
+            return Variable(value, function=fn, parents=args)
+
+        ### these functions will call later implementations you develop
+        def __repr__(self):
+            return f"Variable({self.value}, grad={self.grad})"
+
+        def __add__(self, other):
+            return Variable._apply(Add(), self, other)
+
+        def __sub__(self, other):
+            return Variable._apply(Subtract(), self, other)
+
+        def __mul__(self, other):
+            return Variable._apply(Multiply(), self, other)
+
+        def __truediv__(self, other):
+            return Variable._apply(Divide(), self, other)
+
+        def __neg__(self):
+            return Variable._apply(Negate(), self)
+
+        def __pow__(self, d):
+            return Variable._apply(Power(d), self)
+
+        def log(self):
+            return Variable._apply(Log(), self)
+
+        def exp(self):
+            return Variable._apply(Exp(), self)
+
+    return (Variable,)
+
+
+@app.cell
+def _():
+    return
+
+
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
@@ -122,7 +197,8 @@ def _():
     Subclasses of `Function` need to implement two methods:
       1. The `.forward()` method actually computes the function.  For instance, the forward method of a `Multiply` class would multiply two numbers together, the forward pass of the `Log` class would take the log of a variable, etc.  As you see from the implementation above, this forward call is called by the `__call__()` class, but with additional code that constructions the graph.
       2. The `.backward()` function computes the _product_ of what's referred to as an "incoming derivative" term (this will correspond to the already-computed derivative of nodes later in the graph), and the _partial derivatives_ of this function.  In general, the arguments to the backward function will always be both this incoming derivative and the arguments to the original function.  For example, if we consider some function of two variables $f(x,y)$, and incoming derivative $g \in \mathbb{R}$, then the `.backward()` function would compute two separate product of partial derivatives, which are returned as a list.
-      $$ \frac{\partial f(x,y)}{\partial x} \cdot g, \;\; \frac{\partial f(x,y)}{\partial y} \cdot g $$
+
+    $$ \frac{\partial f(x,y)}{\partial x} \cdot g, \;\; \frac{\partial f(x,y)}{\partial y} \cdot g $$
     """)
     return
 
@@ -136,67 +212,8 @@ def _():
     return
 
 
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    In this case, we are defining the function
-    $$f(x,y) = x y.$$
-    The `.forward()` function simply implements this multiplication, `x*y`.  Furthermore, the partial derivatives of this particular function are given by
-    $$\frac{\partial f(x,y)}{\partial x} = y, \;\; \frac{\partial f(x,y)}{\partial y} = x.$$
-    Thus the `.backward()` function computes the product of the incoming derivative `grad` and each of these partial derivatives, and return them as a list.
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    ### Example: Negation
-
-    Let's look at one more example, this time a function with a single argument, given by $f(x) = -x$.  In this case, the partial derivative is given by
-    $$\frac{\partial f(x)}{\partial x} = -1$$
-    so the `.backward()` function returns `[-grad]` (note that the backward function _always_ returns a list, in this case of just one element, even if the function has only one argument).
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    ### Question 1 - Function implementations
-
-    Implement the following `Function` classes to complete the implementation of the operators listed in the `Variable` class.  We are just providing the class definition itself: you'll need to define and implement `.forward()` and `.backward()` functions in each of these.  Remember that `.backward()` needs to always return a _list_ of products between the incoming derivative and each partial derivative, even if there is only a single argument.
-
-    The one slightly-less straightforward implementation here is the `Power` class, which computes the operation `x**d`.  In this case, we won't actually enable differentation with respect to the `d` variable (we certainly could, it's just a slightly more involved implementation function, so we don't do it in this assignment).  Thus, for this implementation, we'll store the `d` value in the class itself, and pass it to the `__init__()` operation of the function.  This is what's done in the `Variable` class above, i.e., whereas we call the `Mulitply` class like the following:
-    ```python
-    Multiply()(x,y)
-    ```
-    (i.e., we initialize the class, then call it with the `x` and `y` arguments).  You would call `Power` via the following:
-    ```python
-    Power(d)(x)
-    ```
-    """)
-    return
-
-
 @app.cell
-def _():
-    class Function:
-        def __call__(self, *args):
-            """
-            Construct a node in the computation graph via calling the function
-            """
-            value = self.forward(*[a.value for a in args])
-            for p in args:
-                p.num_children += 1
-            return Variable(value, function=self, parents=args)
-
-        def forward(self, input):
-            raise NotImplementedError
-
-        def backward(self, grad, input):
-            raise NotImplementedError
-
+def _(Function):
     class Multiply(Function):
         def forward(self, x, y):
             """
@@ -222,6 +239,41 @@ def _():
             """
             return [y * grad, x * grad]
 
+    return (Multiply,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    In this case, we are defining the function
+
+    $$f(x,y) = x y.$$
+
+    The `.forward()` function simply implements this multiplication, `x*y`.  Furthermore, the partial derivatives of this particular function are given by
+
+    $$\frac{\partial f(x,y)}{\partial x} = y, \;\; \frac{\partial f(x,y)}{\partial y} = x.$$
+
+    Thus the `.backward()` function computes the product of the incoming derivative `grad` and each of these partial derivatives, and return them as a list.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Example: Negation
+
+    Let's look at one more example, this time a function with a single argument, given by $f(x) = -x$.  In this case, the partial derivative is given by
+
+    $$\frac{\partial f(x)}{\partial x} = -1$$
+
+    so the `.backward()` function returns `[-grad]` (note that the backward function _always_ returns a list, in this case of just one element, even if the function has only one argument).
+    """)
+    return
+
+
+@app.cell
+def _(Function):
     class Negate(Function):
         def forward(self, x):
             """
@@ -245,6 +297,30 @@ def _():
             """
             return [-grad]
 
+    return (Negate,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Question 1 - Function implementations
+
+    Implement the following `Function` classes to complete the implementation of the operators listed in the `Variable` class.  We are just providing the class definition itself: you'll need to define and implement `.forward()` and `.backward()` functions in each of these.  Remember that `.backward()` needs to always return a _list_ of products between the incoming derivative and each partial derivative, even if there is only a single argument.
+
+    The one slightly-less straightforward implementation here is the `Power` class, which computes the operation `x**d`.  In this case, we won't actually enable differentation with respect to the `d` variable (we certainly could, it's just a slightly more involved implementation function, so we don't do it in this assignment).  Thus, for this implementation, we'll store the `d` value in the class itself, and pass it to the `__init__()` operation of the function.  This is what's done in the `Variable` class above, i.e., whereas we call the `Mulitply` class like the following:
+    ```python
+    Multiply()(x,y)
+    ```
+    (i.e., we initialize the class, then call it with the `x` and `y` arguments).  You would call `Power` via the following:
+    ```python
+    Power(d)(x)
+    ```
+    """)
+    return
+
+
+@app.cell
+def _(Function):
     class Add(Function):
         """
         Implements addition between two variables f(x,y) = x + y
@@ -253,7 +329,11 @@ def _():
         ### BEGIN YOUR CODE
         pass
         ### END YOUR CODE
+    return (Add,)
 
+
+@app.cell
+def _(Function):
     class Subtract(Function):
         """
         Implements subtraction between two variables f(x,y) = x - y
@@ -262,7 +342,11 @@ def _():
         ### BEGIN YOUR CODE
         pass
         ### END YOUR CODE
+    return (Subtract,)
 
+
+@app.cell
+def _(Function):
     class Divide(Function):
         """
         Implements division between two variables f(x,y) = x / y
@@ -271,7 +355,11 @@ def _():
         ### BEGIN YOUR CODE
         pass
         ### END YOUR CODE
+    return (Divide,)
 
+
+@app.cell
+def _(Function):
     class Power(Function):
         """
         Implements the power function between two variables f(x) = x^d.  Since the
@@ -288,7 +376,11 @@ def _():
         ### BEGIN YOUR CODE
         pass
         ### END YOUR CODE
+    return (Power,)
 
+
+@app.cell
+def _(Function):
     class Log(Function):
         """
         Implements the (natural) logarithm of a function f(x) = log(x).  You can
@@ -298,7 +390,11 @@ def _():
         ### BEGIN YOUR CODE
         pass
         ### END YOUR CODE
+    return (Log,)
 
+
+@app.cell
+def _(Function):
     class Exp(Function):
         """
         Implements the exponential (with base e) of x, f(x) = e^x.  You can use
@@ -308,63 +404,15 @@ def _():
         ### BEGIN YOUR CODE
         pass
         ### END YOUR CODE
-
-    class Variable:
-        def __init__(self, value, function=None, parents=None):
-            """
-            Initialize the variable with its needed properties.
-            """
-            self.value = value
-            self.grad = None
-            self.function = function
-            self.parents = parents
-            self.num_children = 0
-
-        ### these functions will call later implementations you develop
-        def __repr__(self):
-            return f"Variable({self.value}, grad={self.grad})"
-
-        def __add__(self, other):
-            return Add()(self, other)
-
-        def __sub__(self, other):
-            return Subtract()(self, other)
-
-        def __mul__(self, other):
-            return Multiply()(self, other)
-
-        def __truediv__(self, other):
-            return Divide()(self, other)
-
-        def __neg__(self):
-            return Negate()(self)
-
-        def __pow__(self, d):
-            return Power(d)(self)
-
-        def log(self):
-            return Log()(self)
-
-        def exp(self):
-            return Exp()(self)
-
-    return (
-        Add,
-        Divide,
-        Exp,
-        Function,
-        Log,
-        Multiply,
-        Negate,
-        Power,
-        Subtract,
-        Variable,
-    )
+    return (Exp,)
 
 
-@app.function(hide_code=True)
-def test_Add_local():
-    test_Add(Add)
+@app.cell(hide_code=True)
+def _(Add):
+    def test_Add_local():
+        test_Add(Add)
+
+    return
 
 
 @app.cell(hide_code=True)
@@ -375,14 +423,17 @@ def _():
 
 
 @app.cell
-def _(submit_Add_button):
+def _(Add, submit_Add_button):
     mugrade.submit_tests(Add) if submit_Add_button.value else None
     return
 
 
-@app.function(hide_code=True)
-def test_Subtract_local():
-    test_Subtract(Subtract)
+@app.cell(hide_code=True)
+def _(Subtract):
+    def test_Subtract_local():
+        test_Subtract(Subtract)
+
+    return
 
 
 @app.cell(hide_code=True)
@@ -393,14 +444,17 @@ def _():
 
 
 @app.cell
-def _(submit_Subtract_button):
+def _(Subtract, submit_Subtract_button):
     mugrade.submit_tests(Subtract) if submit_Subtract_button.value else None
     return
 
 
-@app.function(hide_code=True)
-def test_Divide_local():
-    test_Divide(Divide)
+@app.cell(hide_code=True)
+def _(Divide):
+    def test_Divide_local():
+        test_Divide(Divide)
+
+    return
 
 
 @app.cell(hide_code=True)
@@ -411,14 +465,17 @@ def _():
 
 
 @app.cell
-def _(submit_Divide_button):
+def _(Divide, submit_Divide_button):
     mugrade.submit_tests(Divide) if submit_Divide_button.value else None
     return
 
 
-@app.function(hide_code=True)
-def test_Power_local():
-    test_Power(Power)
+@app.cell(hide_code=True)
+def _(Power):
+    def test_Power_local():
+        test_Power(Power)
+
+    return
 
 
 @app.cell(hide_code=True)
@@ -429,14 +486,17 @@ def _():
 
 
 @app.cell
-def _(submit_Power_button):
+def _(Power, submit_Power_button):
     mugrade.submit_tests(Power) if submit_Power_button.value else None
     return
 
 
-@app.function(hide_code=True)
-def test_Log_local():
-    test_Log(Log)
+@app.cell(hide_code=True)
+def _(Log):
+    def test_Log_local():
+        test_Log(Log)
+
+    return
 
 
 @app.cell(hide_code=True)
@@ -447,14 +507,17 @@ def _():
 
 
 @app.cell
-def _(submit_Log_button):
+def _(Log, submit_Log_button):
     mugrade.submit_tests(Log) if submit_Log_button.value else None
     return
 
 
-@app.function(hide_code=True)
-def test_Exp_local():
-    test_Exp(Exp)
+@app.cell(hide_code=True)
+def _(Exp):
+    def test_Exp_local():
+        test_Exp(Exp)
+
+    return
 
 
 @app.cell(hide_code=True)
@@ -465,7 +528,7 @@ def _():
 
 
 @app.cell
-def _(submit_Exp_button):
+def _(Exp, submit_Exp_button):
     mugrade.submit_tests(Exp) if submit_Exp_button.value else None
     return
 
@@ -479,7 +542,7 @@ def _():
 
 
 @app.cell
-def _():
+def _(Variable):
     x = Variable(3.0)
     y = Variable(5.0)
     d = (x * y + x**2) / y
@@ -523,13 +586,17 @@ def _():
     c = Variable(value = 21.0, grad = None, parents = [a,b], function = Add, num_children=0)
     ```
     We would call `compute_gradients()` on `c`, which would first set `c.grad=1.0`, corresponding to the simple fact that
+
     $$\frac{\partial c}{\partial c} = 1.$$
+
     This would then call:
     ```
     grad_partials_products = c.function.backward(c.grad, a.value, b.value) # = [1, 1]
     ```
     and set `a.grad` and `b.grad` to each of these values, which represents the fact that
+
     $$\frac{\partial c}{\partial a} = 1, \frac{\partial c}{\partial b} = 1$$
+
     and decrease the `num_children` parameter of `a` and `b`. These last three nodes would now take on the values
     ```
     a = Variable(value = 12.0, grad=1.0, parents = [x,y], function = Multiply, num_children=0)
@@ -579,7 +646,7 @@ def compute_gradients(self):
 
 
 @app.cell
-def _():
+def _(Variable):
     Variable.compute_gradients = compute_gradients
     return
 
@@ -615,7 +682,7 @@ def _():
 
 
 @app.cell
-def _():
+def _(Variable):
     _x = Variable(3.0)
     _y = Variable(4.0)
     ((_x * _y + _x**2) / _y).compute_gradients()
@@ -632,7 +699,7 @@ def _():
 
 
 @app.cell
-def _():
+def _(Variable):
     _x = Variable(3.0)
     _y = Variable(4.0)
     _z = Variable(1.2)
@@ -665,7 +732,7 @@ def _():
     mnist_test = datasets.MNIST(".", train=False, download=True)
     X, y_data = mnist_train.data.reshape(60000, 784) / 255, mnist_train.targets
     X_test, y_test = mnist_test.data.reshape(10000, 784) / 255, mnist_test.targets
-    return X, y_data, X_test, y_test
+    return X, X_test, y_data, y_test
 
 
 @app.cell(hide_code=True)
@@ -674,7 +741,9 @@ def _():
     ### Question 3 - Cross entropy loss and error
 
     Implement the following functions, which compute the cross entropy loss and the error between a set of predictions.  Recall that the cross entropy loss is defined, for $\hat{y} \in \mathbb{R}^k$ and $y \in \{1,\ldots,k\}$ as
+
     $$L_{ce}(\hat{y}, y) = -\log \left ( \frac{\exp \hat{y}_y}{\sum_{j=1}^k \exp \hat{y}_j} \right ) = -\hat{y}_y + \log \sum_{j=1}^k \exp \hat{y}_j$$
+
     You can use the PyTorch function `torch.logsumexp` to compute the last term (this will be more numerically stable for large/small prediction values than individually calling `log` and `exp`).
 
     While you could use e.g. a for loop to compute cross entropy loss, this will be fairly inefficient later on.  Instead, you should use the fact that if you index a 2D tensor with two lists of indexes, it will select the elements corresponding to each of these indexes.  For instead given
@@ -833,7 +902,7 @@ def _():
 
 
 @app.cell
-def _(X, y_data, X_test, y_test):
+def _(X, X_test, y_data, y_test):
     W = train_sgd(X, y_data, step_size=0.1, epochs=5, batch_size=100)
     print(error(X_test @ W.T, y_test))
     return

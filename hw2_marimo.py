@@ -87,78 +87,67 @@ def _():
     return
 
 
-@app.cell
-def _():
-    class Function:
+@app.class_definition
+class Function:
+    """
+    Base class for automatic differentiation functions. Subclasses must
+    implement forward() and backward().
+    """
+
+    def forward(self, *args):
+        raise NotImplementedError
+
+    def backward(self, grad, *args):
+        raise NotImplementedError
+
+
+@app.class_definition
+class Variable:
+    def __init__(self, value, function=None, parents=None):
         """
-        Base class for automatic differentiation functions. Subclasses must
-        implement forward() and backward().
+        Initialize the variable with its needed properties.
         """
+        self.value = value
+        self.grad = None
+        self.function = function
+        self.parents = parents
+        self.num_children = 0
 
-        def forward(self, *args):
-            raise NotImplementedError
+    @staticmethod
+    def _apply(fn, *args):
+        """Construct a node in the computation graph by applying fn to args."""
+        value = fn.forward(*[a.value for a in args])
+        for p in args:
+            p.num_children += 1
+        return Variable(value, function=fn, parents=args)
 
-        def backward(self, grad, *args):
-            raise NotImplementedError
+    ### these functions will call later implementations you develop
+    def __repr__(self):
+        return f"Variable({self.value}, grad={self.grad})"
 
-    return (Function,)
+    def __add__(self, other):
+        return Variable._apply(Add(), self, other)
 
+    def __sub__(self, other):
+        return Variable._apply(Subtract(), self, other)
 
-@app.cell
-def _(Add, Divide, Exp, Log, Multiply, Negate, Power, Subtract):
-    class Variable:
-        def __init__(self, value, function=None, parents=None):
-            """
-            Initialize the variable with its needed properties.
-            """
-            self.value = value
-            self.grad = None
-            self.function = function
-            self.parents = parents
-            self.num_children = 0
+    def __mul__(self, other):
+        return Variable._apply(Multiply(), self, other)
 
-        @staticmethod
-        def _apply(fn, *args):
-            """Construct a node in the computation graph by applying fn to args."""
-            value = fn.forward(*[a.value for a in args])
-            for p in args:
-                p.num_children += 1
-            return Variable(value, function=fn, parents=args)
+    def __truediv__(self, other):
+        return Variable._apply(Divide(), self, other)
 
-        ### these functions will call later implementations you develop
-        def __repr__(self):
-            return f"Variable({self.value}, grad={self.grad})"
+    def __neg__(self):
+        return Variable._apply(Negate(), self)
 
-        def __add__(self, other):
-            return Variable._apply(Add(), self, other)
+    def __pow__(self, d):
+        return Variable._apply(Power(d), self)
 
-        def __sub__(self, other):
-            return Variable._apply(Subtract(), self, other)
+    def log(self):
+        return Variable._apply(Log(), self)
 
-        def __mul__(self, other):
-            return Variable._apply(Multiply(), self, other)
-
-        def __truediv__(self, other):
-            return Variable._apply(Divide(), self, other)
-
-        def __neg__(self):
-            return Variable._apply(Negate(), self)
-
-        def __pow__(self, d):
-            return Variable._apply(Power(d), self)
-
-        def log(self):
-            return Variable._apply(Log(), self)
-
-        def exp(self):
-            return Variable._apply(Exp(), self)
-
-    return (Variable,)
-
-
-@app.cell
-def _():
-    return
+    def exp(self):
+        return Variable._apply(Exp(), self)
 
 
 @app.cell(hide_code=True)
@@ -182,11 +171,12 @@ def _():
     In this graph, the original variables and intermediate terms are represented as nodes, and the parents of a node represent the variables that were used to compute that term.  Although not depicted in the graph, each variable in the graph also stores a link to the function that created that variable (as a function of its parents).
 
     In our code, these computations graphs are modeled implicitly via the `Variable` class.  Specifically, the class contains the following items:
-      - `.value` : a `float` value that contain the numerical value of the variable
-      - `.grad` : a `float` value (or `None`) that will be populated with the variable's derivative with respect to a final function
-      - `.parents` : the parents of the node in the graph or `None` if the node has no parents
-      - `.function` : a reference to the function that was used to create the note from its parents (which will be a reference to an instance of the `Function` class)
-      - `.num_children` : the number of children that each node has (this will be needed for counting whether all children have already computed their gradient, we could compute it online, but this would make the code more complex)
+
+    - `.value` : a `float` value that contain the numerical value of the variable
+    - `.grad` : a `float` value (or `None`) that will be populated with the variable's derivative with respect to a final function
+    - `.parents` : the parents of the node in the graph or `None` if the node has no parents
+    - `.function` : a reference to the function that was used to create the note from its parents (which will be a reference to an instance of the `Function` class)
+    - `.num_children` : the number of children that each node has (this will be needed for counting whether all children have already computed their gradient, we could compute it online, but this would make the code more complex)
 
     In addition to the `Variable` class, there is also a `Function` class that creates variables in a fashion that builds the graph.  Specifically, the `__call__` method of the class implements the routine that constructs the graph. This lets you call a function like multiplication in the following manner:
     ```python
@@ -195,8 +185,9 @@ def _():
     which initializes the `Multiply()` class and then calls the resulting with arguments `x` and `y`, which invokes the `__call__()` function.
 
     Subclasses of `Function` need to implement two methods:
-      1. The `.forward()` method actually computes the function.  For instance, the forward method of a `Multiply` class would multiply two numbers together, the forward pass of the `Log` class would take the log of a variable, etc.  As you see from the implementation above, this forward call is called by the `__call__()` class, but with additional code that constructions the graph.
-      2. The `.backward()` function computes the _product_ of what's referred to as an "incoming derivative" term (this will correspond to the already-computed derivative of nodes later in the graph), and the _partial derivatives_ of this function.  In general, the arguments to the backward function will always be both this incoming derivative and the arguments to the original function.  For example, if we consider some function of two variables $f(x,y)$, and incoming derivative $g \in \mathbb{R}$, then the `.backward()` function would compute two separate product of partial derivatives, which are returned as a list.
+
+    1. The `.forward()` method actually computes the function.  For instance, the forward method of a `Multiply` class would multiply two numbers together, the forward pass of the `Log` class would take the log of a variable, etc.  As you see from the implementation above, this forward call is called by the `__call__()` class, but with additional code that constructions the graph.
+    2. The `.backward()` function computes the _product_ of what's referred to as an "incoming derivative" term (this will correspond to the already-computed derivative of nodes later in the graph), and the _partial derivatives_ of this function.  In general, the arguments to the backward function will always be both this incoming derivative and the arguments to the original function.  For example, if we consider some function of two variables $f(x,y)$, and incoming derivative $g \in \mathbb{R}$, then the `.backward()` function would compute two separate product of partial derivatives, which are returned as a list.
 
     $$ \frac{\partial f(x,y)}{\partial x} \cdot g, \;\; \frac{\partial f(x,y)}{\partial y} \cdot g $$
     """)
@@ -212,34 +203,31 @@ def _():
     return
 
 
-@app.cell
-def _(Function):
-    class Multiply(Function):
-        def forward(self, x, y):
-            """
-            Compute the forward pass, in this case multiplying x and y
-            Input:
-                x: float - first argument
-                y: float - second argument
-            Output:
-                float - equal to x * y
-            """
-            return x * y
+@app.class_definition
+class Multiply(Function):
+    def forward(self, x, y):
+        """
+        Compute the forward pass, in this case multiplying x and y
+        Input:
+            x: float - first argument
+            y: float - second argument
+        Output:
+            float - equal to x * y
+        """
+        return x * y
 
-        def backward(self, grad, x, y):
-            """
-            Compute the product of grad and each partial derivative of the function.
-            Input:
-                grad: float - incoming derivative
-                x: float - first argument (to the original forward call)
-                y: float - second argument (to the original forward call)
-            Output:
-                list[float] - list of floats for the products of grad and each
-                              partial derivative of the function
-            """
-            return [y * grad, x * grad]
-
-    return (Multiply,)
+    def backward(self, grad, x, y):
+        """
+        Compute the product of grad and each partial derivative of the function.
+        Input:
+            grad: float - incoming derivative
+            x: float - first argument (to the original forward call)
+            y: float - second argument (to the original forward call)
+        Output:
+            list[float] - list of floats for the products of grad and each
+                          partial derivative of the function
+        """
+        return [y * grad, x * grad]
 
 
 @app.cell(hide_code=True)
@@ -272,32 +260,29 @@ def _():
     return
 
 
-@app.cell
-def _(Function):
-    class Negate(Function):
-        def forward(self, x):
-            """
-            Compute the forward pass, in this case negating x
-            Input:
-                x : float - argument to function
-            Output:
-                return float - negation of x
-            """
-            return -x
+@app.class_definition
+class Negate(Function):
+    def forward(self, x):
+        """
+        Compute the forward pass, in this case negating x
+        Input:
+            x : float - argument to function
+        Output:
+            return float - negation of x
+        """
+        return -x
 
-        def backward(self, grad, x):
-            """
-            Compute product of incoming derivative grad and partial derivative
-            Input:
-                grad: float - incoming derivative
-                x: float - argument (to the original forward call)
-            Output:
-                list[float] - list of a single float for the product of grad and
-                              partial derivative of the function
-            """
-            return [-grad]
-
-    return (Negate,)
+    def backward(self, grad, x):
+        """
+        Compute product of incoming derivative grad and partial derivative
+        Input:
+            grad: float - incoming derivative
+            x: float - argument (to the original forward call)
+        Output:
+            list[float] - list of a single float for the product of grad and
+                          partial derivative of the function
+        """
+        return [-grad]
 
 
 @app.cell(hide_code=True)
@@ -319,100 +304,20 @@ def _():
     return
 
 
-@app.cell
-def _(Function):
-    class Add(Function):
-        """
-        Implements addition between two variables f(x,y) = x + y
-        """
+@app.class_definition
+class Add(Function):
+    """
+    Implements addition between two variables f(x,y) = x + y
+    """
 
-        ### BEGIN YOUR CODE
-        pass
-        ### END YOUR CODE
-    return (Add,)
+    ### BEGIN YOUR CODE
+    pass
+    ### END YOUR CODE
 
 
-@app.cell
-def _(Function):
-    class Subtract(Function):
-        """
-        Implements subtraction between two variables f(x,y) = x - y
-        """
-
-        ### BEGIN YOUR CODE
-        pass
-        ### END YOUR CODE
-    return (Subtract,)
-
-
-@app.cell
-def _(Function):
-    class Divide(Function):
-        """
-        Implements division between two variables f(x,y) = x / y
-        """
-
-        ### BEGIN YOUR CODE
-        pass
-        ### END YOUR CODE
-    return (Divide,)
-
-
-@app.cell
-def _(Function):
-    class Power(Function):
-        """
-        Implements the power function between two variables f(x) = x^d.  Since the
-        function does _not_ need to provide a derivative with respect to the the
-        d argument, you should instead implement an __init__ function that stores
-        the d variable as a member, and use this in the forward pass.  The final
-        usage of the class will then be what is done by our `Variable`
-        implementation above.
-
-        Be sure to handle the case where d is zero (i.e., the function is equal to
-        one).
-        """
-
-        ### BEGIN YOUR CODE
-        pass
-        ### END YOUR CODE
-    return (Power,)
-
-
-@app.cell
-def _(Function):
-    class Log(Function):
-        """
-        Implements the (natural) logarithm of a function f(x) = log(x).  You can
-        use calls from the math package to implement this.
-        """
-
-        ### BEGIN YOUR CODE
-        pass
-        ### END YOUR CODE
-    return (Log,)
-
-
-@app.cell
-def _(Function):
-    class Exp(Function):
-        """
-        Implements the exponential (with base e) of x, f(x) = e^x.  You can use
-        calls from the math package to implement this.
-        """
-
-        ### BEGIN YOUR CODE
-        pass
-        ### END YOUR CODE
-    return (Exp,)
-
-
-@app.cell(hide_code=True)
-def _(Add):
-    def test_Add_local():
-        test_Add(Add)
-
-    return
+@app.function(hide_code=True)
+def test_Add_local():
+    test_Add(Add)
 
 
 @app.cell(hide_code=True)
@@ -423,17 +328,25 @@ def _():
 
 
 @app.cell
-def _(Add, submit_Add_button):
+def _(submit_Add_button):
     mugrade.submit_tests(Add) if submit_Add_button.value else None
     return
 
 
-@app.cell(hide_code=True)
-def _(Subtract):
-    def test_Subtract_local():
-        test_Subtract(Subtract)
+@app.class_definition
+class Subtract(Function):
+    """
+    Implements subtraction between two variables f(x,y) = x - y
+    """
 
-    return
+    ### BEGIN YOUR CODE
+    pass
+    ### END YOUR CODE
+
+
+@app.function(hide_code=True)
+def test_Subtract_local():
+    test_Subtract(Subtract)
 
 
 @app.cell(hide_code=True)
@@ -444,17 +357,25 @@ def _():
 
 
 @app.cell
-def _(Subtract, submit_Subtract_button):
+def _(submit_Subtract_button):
     mugrade.submit_tests(Subtract) if submit_Subtract_button.value else None
     return
 
 
-@app.cell(hide_code=True)
-def _(Divide):
-    def test_Divide_local():
-        test_Divide(Divide)
+@app.class_definition
+class Divide(Function):
+    """
+    Implements division between two variables f(x,y) = x / y
+    """
 
-    return
+    ### BEGIN YOUR CODE
+    pass
+    ### END YOUR CODE
+
+
+@app.function(hide_code=True)
+def test_Divide_local():
+    test_Divide(Divide)
 
 
 @app.cell(hide_code=True)
@@ -465,17 +386,33 @@ def _():
 
 
 @app.cell
-def _(Divide, submit_Divide_button):
+def _(submit_Divide_button):
     mugrade.submit_tests(Divide) if submit_Divide_button.value else None
     return
 
 
-@app.cell(hide_code=True)
-def _(Power):
-    def test_Power_local():
-        test_Power(Power)
+@app.class_definition
+class Power(Function):
+    """
+    Implements the power function between two variables f(x) = x^d.  Since the
+    function does _not_ need to provide a derivative with respect to the the
+    d argument, you should instead implement an __init__ function that stores
+    the d variable as a member, and use this in the forward pass.  The final
+    usage of the class will then be what is done by our `Variable`
+    implementation above.
 
-    return
+    Be sure to handle the case where d is zero (i.e., the function is equal to
+    one).
+    """
+
+    ### BEGIN YOUR CODE
+    pass
+    ### END YOUR CODE
+
+
+@app.function(hide_code=True)
+def test_Power_local():
+    test_Power(Power)
 
 
 @app.cell(hide_code=True)
@@ -486,17 +423,26 @@ def _():
 
 
 @app.cell
-def _(Power, submit_Power_button):
+def _(submit_Power_button):
     mugrade.submit_tests(Power) if submit_Power_button.value else None
     return
 
 
-@app.cell(hide_code=True)
-def _(Log):
-    def test_Log_local():
-        test_Log(Log)
+@app.class_definition
+class Log(Function):
+    """
+    Implements the (natural) logarithm of a function f(x) = log(x).  You can
+    use calls from the math package to implement this.
+    """
 
-    return
+    ### BEGIN YOUR CODE
+    pass
+    ### END YOUR CODE
+
+
+@app.function(hide_code=True)
+def test_Log_local():
+    test_Log(Log)
 
 
 @app.cell(hide_code=True)
@@ -507,17 +453,26 @@ def _():
 
 
 @app.cell
-def _(Log, submit_Log_button):
+def _(submit_Log_button):
     mugrade.submit_tests(Log) if submit_Log_button.value else None
     return
 
 
-@app.cell(hide_code=True)
-def _(Exp):
-    def test_Exp_local():
-        test_Exp(Exp)
+@app.class_definition
+class Exp(Function):
+    """
+    Implements the exponential (with base e) of x, f(x) = e^x.  You can use
+    calls from the math package to implement this.
+    """
 
-    return
+    ### BEGIN YOUR CODE
+    pass
+    ### END YOUR CODE
+
+
+@app.function(hide_code=True)
+def test_Exp_local():
+    test_Exp(Exp)
 
 
 @app.cell(hide_code=True)
@@ -528,7 +483,7 @@ def _():
 
 
 @app.cell
-def _(Exp, submit_Exp_button):
+def _(submit_Exp_button):
     mugrade.submit_tests(Exp) if submit_Exp_button.value else None
     return
 
@@ -542,7 +497,7 @@ def _():
 
 
 @app.cell
-def _(Variable):
+def _():
     x = Variable(3.0)
     y = Variable(5.0)
     d = (x * y + x**2) / y
@@ -646,7 +601,7 @@ def compute_gradients(self):
 
 
 @app.cell
-def _(Variable):
+def _():
     Variable.compute_gradients = compute_gradients
     return
 
@@ -682,7 +637,7 @@ def _():
 
 
 @app.cell
-def _(Variable):
+def _():
     _x = Variable(3.0)
     _y = Variable(4.0)
     ((_x * _y + _x**2) / _y).compute_gradients()
@@ -699,7 +654,7 @@ def _():
 
 
 @app.cell
-def _(Variable):
+def _():
     _x = Variable(3.0)
     _y = Variable(4.0)
     _z = Variable(1.2)
